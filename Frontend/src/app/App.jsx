@@ -1,12 +1,14 @@
 import "./App.css";
 import { Editor } from "@monaco-editor/react";
 import { MonacoBinding } from "y-monaco";
-import { useRef, useMemo, useState, useEffect} from "react";
+import { useRef, useMemo, useState, useEffect } from "react";
 import * as Y from "yjs";
 import { SocketIOProvider } from "y-socket.io";
 
 function App() {
   const editorRef = useRef(null);
+  const [isEditorMounted, setIsEditorMounted] = useState(false);
+  const [connectedUsers, setConnectedUsers] = useState([]);
   const [username, setUsername] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("username") || "";
@@ -17,15 +19,18 @@ function App() {
 
   const handleMount = (editor) => {
     editorRef.current = editor;
-
+    setIsEditorMounted(true);
   };
 
   useEffect(() => {
-    if (username && editorRef.current) {
-      const provider = new SocketIOProvider("https://localhost:3000", "monaco", ydoc {
-        autoConnect: true
-      }
-      );
+    if (!username || !isEditorMounted || !editorRef.current) {
+      return;
+    }
+
+      const provider = new SocketIOProvider("http://localhost:3000", "monaco", ydoc, {
+        autoConnect: true,
+      });
+
       const monacoBinding = new MonacoBinding(
         yText,
         editorRef.current.getModel(),
@@ -33,39 +38,42 @@ function App() {
         provider.awareness
       );
 
-      provider.awareness.setLocalStateField("user", {username});
+      provider.awareness.setLocalStateField("user", { username });
 
-      provider.awareness.on("change", () => {
-        const states = Array.from(provider.awareness.getStates().values());
-        console.log("Active users:", states.map(s => s.user?.username).filter(user => Boolean(user.username)));
+      const updateConnectedUsers = () => {
+        const names = Array.from(provider.awareness.getStates().values())
+          .map((state) => state.user?.username)
+          .filter(Boolean);
+
+        const uniqueNames = [...new Set(names)];
+        setConnectedUsers(uniqueNames);
+      };
+
+      updateConnectedUsers();
+      provider.awareness.on("change", updateConnectedUsers);
+
+      provider.on("status", (event) => {
+        if (event.status === "disconnected") {
+          setConnectedUsers([]);
+        }
       });
 
       return () => {
+        provider.awareness.off("change", updateConnectedUsers);
         monacoBinding.destroy();
         provider.destroy();
       };
-    }
-  } , [
-    editorRef.current,
-    ydoc,
-    yText,
-    username
-  ]
-
-
-
-
-
-
-
-
-
-
+  }, [ydoc, yText, username, isEditorMounted]);
 
   const handleJoin = (e) => {
     e.preventDefault();
-    setUsername(e.target[0].value);
-    window.history.pushState({}, "", "?username=" + e.target[0].value);
+    const enteredName = e.target[0].value.trim();
+    if (!enteredName) {
+      return;
+    }
+
+    setUsername(enteredName);
+    window.history.pushState({}, "", "?username=" + enteredName);
   };
 
   if (!username) {
@@ -109,7 +117,25 @@ function App() {
   return (
     <main className="app-shell">
       <aside className="panel panel-light" aria-label="left panel">
-        <div className="panel-inner panel-inner-light" />
+        <div className="panel-inner panel-inner-light users-panel">
+          <div className="users-header">
+            <h3>Connected Users</h3>
+            <span>{connectedUsers.length}</span>
+          </div>
+
+          <ul className="users-list" aria-label="Connected users list">
+            {connectedUsers.length === 0 ? (
+              <li className="users-empty">No users connected</li>
+            ) : (
+              connectedUsers.map((name) => (
+                <li className="user-item" key={name}>
+                  <span className="user-dot" aria-hidden="true" />
+                  <span>{name}</span>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
       </aside>
 
       <section className="panel panel-dark" aria-label="main canvas">
